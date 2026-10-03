@@ -6,6 +6,8 @@ a  POST /api/chat  de Holmes (SSE) y devuelve la respuesta en el formato pedido.
 
 - Mientras Holmes investiga, emite indicadores de progreso (comandos ejecutados, razonamiento)
   y latidos periódicos, para que ni el usuario ni los proxies piensen que se ha colgado.
+- Las peticiones auxiliares de Open WebUI (títulos, etiquetas, seguimientos, búsquedas, autocompletado) NO pasan por
+  Holmes: se envían directamente al LLM subyacente (mismo MODEL), sin herramientas ni investigación.
 - Recuerda las herramientas que Holmes consultó en turnos anteriores (caché del historial completo,
   localizada por el último par usuario/asistente) aunque el cliente solo reenvíe texto.
 
@@ -23,6 +25,7 @@ from collections import OrderedDict
 from typing import Any, AsyncIterator, Optional
 
 import httpx
+import litellm
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -39,6 +42,17 @@ HISTORY_CACHE_MAX = int(os.environ.get("HISTORY_CACHE_MAX", "64"))
 HISTORY_CACHE_TTL = float(os.environ.get("HISTORY_CACHE_TTL", "21600"))
 DEFAULT_MODEL_ID = os.environ.get("DEFAULT_MODEL_ID", "holmes")
 REASONING_MAX_CHARS = int(os.environ.get("REASONING_MAX_CHARS", "300"))
+# Tareas auxiliares (Open WebUI) que se desvían al LLM sin pasar por Holmes. Expresiones regulares separadas por ";;"
+# que se buscan en el último mensaje de usuario. TASK_PATTERNS sustituye a las de por defecto; TASK_PATTERNS_EXTRA las amplía.
+DEFAULT_TASK_PATTERNS = [
+    r"Generate a concise title summarizing the chat history",
+    r"Generate 1-3 broad tags categorizing",
+    r"Suggest 3-5 relevant follow-up questions",
+    r"Analyze the chat history to determine the necessity of generating search queries",
+    r"You are an autocompletion system",
+    r"Generate a detailed prompt for am image generation",
+]
+TASK_BYPASS = os.environ.get("TASK_BYPASS", "true").lower() not in ("0", "false", "no")
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)-8s %(message)s")
 log = logging.getLogger("holmes-gateway")
@@ -152,6 +166,59 @@ async def holmes_models() -> list[str]:
 
 def _holmes_headers() -> dict:
     return {"X-API-Key": HOLMES_API_KEY} if HOLMES_API_KEY else {}
+
+
+# ----------------------------------------------------------------------------- tareas auxiliares -> LLM directo
+def _compile_patterns() -> list[re.Pattern]:
+    raw = os.environ.get("TASK_PATTERNS")
+    patterns = [p for p in raw.split(";;") if p.strip()] if raw else list(DEFAULT_TASK_PATTERNS)
+    patterns += [p for p in os.environ.get("TASK_PATTERNS_EXTRA", "").split(";;") if p.strip()]
+    return [re.compile(p, re.IGNORECASE) for p in patterns]
+
+
+TASK_REGEXES = _compile_patterns()
+
+
+def is_task(chat: ChatInput) -> Optional[str]:
+    """Devuelve el patrón que coincide si la petición es una tarea auxiliar (no una pregunta para Holmes)."""
+    if not TASK_BYPASS or not chat.turns:
+        return None
+    last = chat.turns[-1][1]
+    for rx in TASK_REGEXES:
+        if rx.search(last):
+            return rx.pattern
+    return None
+
+
+async def direct_events(chat: ChatInput, pattern: str) -> AsyncIterator[tuple]:
+    """Envía la petición tal cual al LLM subyacente (sin Holmes, sin herramientas)."""
+    model = chat.model or os.environ.get("MODEL", "")
+    if not model:
+        names = await holmes_models()
+        model = names[0] if names else ""
+    if not model:
+        yield ("error", "No hay modelo: define MODEL (el mismo que usa Holmes)")
+        return
+    messages = ([{"role": "system", "content": chat.system}] if chat.system else []) + [
+        {"role": r, "content": t} for r, t in chat.turns
+    ]
+    started = time.monotonic()
+    log.info("Tarea auxiliar -> LLM directo (%s), sin Holmes. Patrón: %r. Inicio: %.80r", model, pattern, chat.turns[-1][1][:80])
+    try:
+        resp = await litellm.acompletion(model=model, messages=messages, timeout=REQUEST_TIMEOUT, drop_params=True)
+        usage = getattr(resp, "usage", None)
+        log.info("Tarea auxiliar completada en %.1fs (tokens: %s)", time.monotonic() - started, getattr(usage, "total_tokens", "?"))
+        yield ("answer", {"analysis": resp.choices[0].message.content or "",
+                          "metadata": {"costs": {"prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                                                 "completion_tokens": getattr(usage, "completion_tokens", 0) or 0}}})
+    except Exception as e:  # noqa: BLE001  (no se recurre a Holmes: lanzaría la investigación que queremos evitar)
+        log.error("Tarea auxiliar fallida: %s: %s", type(e).__name__, e)
+        yield ("error", f"{type(e).__name__}: {e}")
+
+
+def events_for(chat: ChatInput) -> AsyncIterator[tuple]:
+    pattern = is_task(chat)
+    return direct_events(chat, pattern) if pattern else holmes_events(chat)
 
 
 # ----------------------------------------------------------------------------- núcleo: Holmes -> eventos
@@ -300,7 +367,7 @@ async def chat_completions(request: Request):
         async def stream():
             yield chunk({"role": "assistant", "content": ""})
             progress_in_content = False
-            async for kind, val in holmes_events(chat):
+            async for kind, val in events_for(chat):
                 if kind in ("progress", "heartbeat") and PROGRESS_MODE != "off":
                     text = val if kind == "progress" else _heartbeat_text(val)
                     if PROGRESS_MODE == "content":
@@ -333,7 +400,7 @@ async def chat_completions(request: Request):
     # Sin streaming: espacios en blanco (JSON válido) como keepalive hasta tener la respuesta
     async def body_stream():
         result: dict = {"error": {"message": "Holmes no devolvió respuesta", "type": "upstream_error"}}
-        async for kind, val in holmes_events(chat):
+        async for kind, val in events_for(chat):
             if kind == "heartbeat":
                 yield b" "
             elif kind == "error":
@@ -370,7 +437,7 @@ async def anthropic_messages(request: Request):
         async def stream():
             yield _sse({"type": "message_start", "message": message_obj("")}, "message_start")
             index, thinking_open = 0, False
-            async for kind, val in holmes_events(chat):
+            async for kind, val in events_for(chat):
                 if kind in ("progress", "heartbeat") and PROGRESS_MODE != "off":
                     text = val if kind == "progress" else _heartbeat_text(val)
                     if not thinking_open:
@@ -396,7 +463,7 @@ async def anthropic_messages(request: Request):
 
     async def body_stream():
         result: dict = {"type": "error", "error": {"type": "api_error", "message": "Holmes no devolvió respuesta"}}
-        async for kind, val in holmes_events(chat):
+        async for kind, val in events_for(chat):
             if kind == "heartbeat":
                 yield b" "
             elif kind == "error":

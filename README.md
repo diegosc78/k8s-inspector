@@ -222,6 +222,7 @@ Fuera del clúster, `holmes-server` abre solo los port-forward a Prometheus/Graf
 
 - **Indicadores de progreso.** Holmes tarda decenas de segundos en investigar. Con `stream: true` el gateway emite los comandos que va ejecutando (`🔧 kubectl get nodes`), su razonamiento (`💭 ...`) y un latido cada `HEARTBEAT_SECONDS` (`⏳ Sigo trabajando… (35 s)`). Van como `reasoning_content` (OpenAI; Open WebUI lo muestra como bloque plegable de "pensamiento") o como bloque `thinking` (Anthropic). `PROGRESS_MODE=content` los mezcla en la respuesta; `off` solo envía keepalives (`: keepalive` / `ping`). Sin `stream`, envía espacios en blanco (JSON válido) hasta tener la respuesta, para que los proxies no corten por inactividad.
 - **Memoria de herramientas.** Los clientes solo reenvían el texto de la conversación, así que Holmes "olvidaría" qué consultó. El gateway guarda el historial completo de Holmes (con llamadas y resultados de herramientas) en una caché en memoria, localizada por el último par usuario/asistente, y lo recupera en el turno siguiente. Si no está en caché (reinicio, varias réplicas, mensaje editado) recurre al historial de solo texto. Es una caché por proceso: con varias réplicas, usa afinidad de sesión o una sola.
+- **Tareas auxiliares sin Holmes.** Open WebUI lanza peticiones propias (título del chat, etiquetas, preguntas de seguimiento, consultas de búsqueda, autocompletado) a través del mismo modelo. El gateway las reconoce por el texto de sus plantillas y las envía **directamente al LLM subyacente** (el `MODEL` de Holmes, vía `litellm`), sin herramientas ni investigación. Quedan en el log: `Tarea auxiliar -> LLM directo (...)`. Si el LLM falla no se recurre a Holmes. La plantilla RAG de Open WebUI (preguntas con documentos adjuntos) no se desvía: va a Holmes.
 - **Herramientas del cliente ignoradas.** Holmes ejecuta sus herramientas en el servidor; no se exponen como `tool_calls`.
 - **Streaming.** Holmes no emite tokens sueltos: la respuesta final llega por trozos al terminar la investigación.
 
@@ -235,11 +236,13 @@ Fuera del clúster, `holmes-server` abre solo los port-forward a Prometheus/Graf
 | `REASONING_MAX_CHARS` | `300` | Recorte del razonamiento mostrado (0 = no mostrarlo) |
 | `HISTORY_CACHE_MAX` / `HISTORY_CACHE_TTL` | `64` / `21600` | Entradas y segundos de la caché de historial |
 | `GATEWAY_PORT` | `8080` | Puerto del gateway |
+| `TASK_BYPASS` | `true` | `false` envía también las tareas auxiliares a Holmes |
+| `TASK_PATTERNS` / `TASK_PATTERNS_EXTRA` | plantillas de Open WebUI | Expresiones regulares (separadas por `;;`) que identifican tareas auxiliares; la primera sustituye a las de serie, la segunda las amplía (útil si personalizas las plantillas) |
 | `DEFAULT_MODEL_ID` | `holmes` | Alias del modelo por defecto de Holmes |
 
 ### Open WebUI
 
-*Admin → Settings → Connections → OpenAI*: URL `http://<servicio>:8080/v1`, clave `GATEWAY_API_KEY`, modelo `holmes`. **Importante:** en *Settings → Interface* asigna un **modelo de tareas distinto** (para títulos, etiquetas y sugerencias); si no, cada chat nuevo lanzaría investigaciones completas de Holmes solo para generar un título.
+*Admin → Settings → Connections → OpenAI*: URL `http://<servicio>:8080/v1`, clave `GATEWAY_API_KEY`, modelo `holmes`. Los títulos, etiquetas y sugerencias que genera Open WebUI no llegan a Holmes: el gateway los desvía al LLM subyacente (ver arriba). Si personalizas esas plantillas en Open WebUI, añade su frase en `TASK_PATTERNS_EXTRA`; como red de seguridad, puedes además asignar un *modelo de tareas* distinto en *Settings → Interface*.
 
 ### Despliegue en Kubernetes
 
