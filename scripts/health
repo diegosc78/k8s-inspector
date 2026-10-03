@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Resumen rápido del clúster: nodos, consumo, pods problemáticos, eventos recientes.
+kubectl get nodes -o wide
+echo; kubectl top nodes 2>&1 || echo "(metrics-server no disponible)"
+echo; echo "== Pods no Running/Completed =="
+kubectl get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded
+echo; echo "== Top 10 pods por memoria =="
+kubectl top pods -A --sort-by=memory 2>/dev/null | head -11
+echo; echo "== Reinicios altos =="
+kubectl get pods -A --no-headers | awk '$5+0>3 {print}'
+echo; echo "== Últimos Warnings =="
+kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -15

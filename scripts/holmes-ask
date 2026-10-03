@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# HolmesGPT con port-forward a Prometheus si hace falta. Uso: holmes-ask "por qué falla el pod X?"
+set -euo pipefail
+if [ -z "${PROMETHEUS_URL:-}" ]; then pf >/dev/null || true; export PROMETHEUS_URL="http://localhost:${PROM_PORT:-9090}"; fi
+exec holmes ask "$@"

@@ -1,0 +1,6 @@
+source /usr/share/bash-completion/bash_completion
+source <(kubectl completion bash); alias k=kubectl; complete -o default -F __start_kubectl k
+source <(helm completion bash)
+alias kns=kubens kctx=kubectx
+PS1='\[\e[36m\][k8s-inspector]\[\e[0m\] \w \$ '
+echo "Herramientas: kubectl k9s stern helm yq jq krr holmes | scripts: health pf krr-run holmes-ask"

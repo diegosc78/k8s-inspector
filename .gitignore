@@ -1,0 +1,21 @@
+# Secretos y credenciales
+.env
+.env.*
+!.env.example
+*.kubeconfig
+kubeconfig*
+.kube/
+*.pem
+*.key
+*.crt
+secrets/
+
+# Salidas de las herramientas
+reports/
+*.log
+
+# Varios
+.DS_Store
+.vscode/
+.idea/
+__pycache__/

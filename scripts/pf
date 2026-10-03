@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Port-forward en segundo plano a Prometheus. Uso: pf [stop]
+set -euo pipefail
+NS="${PROM_NAMESPACE:-monitoring}"; SVC="${PROM_SERVICE:-prometheus-operated}"; PORT="${PROM_PORT:-9090}"
+PIDFILE=/tmp/pf-prometheus.pid
+if [ "${1:-}" = stop ]; then [ -f $PIDFILE ] && kill "$(cat $PIDFILE)" && rm -f $PIDFILE; exit 0; fi
+if [ -f $PIDFILE ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then echo "Ya activo"; exit 0; fi
+kubectl -n "$NS" port-forward "svc/$SVC" "$PORT:$PORT" >/tmp/pf-prometheus.log 2>&1 &
+echo $! > $PIDFILE
+for _ in $(seq 20); do nc -z localhost "$PORT" 2>/dev/null && { echo "Prometheus -> http://localhost:$PORT"; exit 0; }; sleep 0.5; done
+echo "Fallo el port-forward:"; cat /tmp/pf-prometheus.log; exit 1

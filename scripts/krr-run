@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# KRR con Prometheus (URL explícita, o port-forward automático). Args extra se pasan a krr.
+set -euo pipefail
+if [ -z "${PROMETHEUS_URL:-}" ]; then pf >/dev/null; PROMETHEUS_URL="http://localhost:${PROM_PORT:-9090}"; fi
+mkdir -p ~/reports
+exec krr simple -p "$PROMETHEUS_URL" "$@"

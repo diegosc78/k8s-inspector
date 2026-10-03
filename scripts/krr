@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec /home/inspector/krr/.venv/bin/python /home/inspector/krr/krr.py "$@"

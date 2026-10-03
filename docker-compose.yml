@@ -1,0 +1,18 @@
+services:
+  inspector:
+    build: .
+    image: k8s-inspector
+    stdin_open: true
+    tty: true
+    env_file: .env
+    environment:
+      KUBECONFIG: /home/inspector/.kube/config
+    volumes:
+      # Credenciales SOLO montadas, nunca dentro de la imagen
+      - ${KUBECONFIG_HOST:-~/.kube/config}:/home/inspector/.kube/config:ro
+      - ./config/holmes.yaml:/home/inspector/.holmes/config.yaml:ro
+      - ./reports:/home/inspector/reports
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Descomenta si el API server/Prometheus solo son alcanzables vía red del host (VPN, etc.)
+    network_mode: host

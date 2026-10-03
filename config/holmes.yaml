@@ -1,0 +1,27 @@
+# Config de HolmesGPT para este homelab (kubeadm + Calico + MetalLB + nginx-gateway + kube-prometheus-stack).
+# Se monta en ~/.holmes/config.yaml (ver docker-compose.yml).
+toolsets:
+  # Prometheus: la URL se toma de $PROMETHEUS_URL (la exporta holmes-ask, vía port-forward o la que definas en .env)
+  prometheus/metrics:
+    enabled: true
+
+  # No aplican a este clúster -> desactivados para un arranque más rápido y limpio
+  cilium/core: {enabled: false}
+  hubble/observability: {enabled: false}
+  argocd/core: {enabled: false}
+  inspektor-gadget/tcpdump: {enabled: false}
+  inspektor-gadget/node: {enabled: false}
+  openshift/core: {enabled: false}
+  openshift/logs: {enabled: false}
+  openshift/security: {enabled: false}
+  openshift/live-metrics: {enabled: false}
+  aks/core: {enabled: false}
+  aks/node-health: {enabled: false}
+  kubevela/core: {enabled: false}
+  crossplane/core: {enabled: false}
+  docker/core: {enabled: false}
+  opensearch/query_assist: {enabled: false}
+  slab: {enabled: false}
+  notion: {enabled: false}
+  robusta: {enabled: false}
+  kubernetes/krew-extras: {enabled: false}

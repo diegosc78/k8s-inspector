@@ -1,0 +1,10 @@
+.env
+.env.*
+.git
+.kube
+reports
+secrets
+*.pem
+*.key
+README.md
+docker-compose.yml
