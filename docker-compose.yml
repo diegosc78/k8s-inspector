@@ -1,7 +1,7 @@
 services:
   inspector:
     build: .
-    image: k8s-inspector
+    image: ${IMAGE:-ponte124/k8s-inspector}:${TAG:-latest}
     stdin_open: true
     tty: true
     env_file: .env

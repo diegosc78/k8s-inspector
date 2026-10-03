@@ -24,4 +24,3 @@ toolsets:
   slab: {enabled: false}
   notion: {enabled: false}
   robusta: {enabled: false}
-  kubernetes/krew-extras: {enabled: false}

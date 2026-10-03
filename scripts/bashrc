@@ -3,4 +3,5 @@ source <(kubectl completion bash); alias k=kubectl; complete -o default -F __sta
 source <(helm completion bash)
 alias kns=kubens kctx=kubectx
 PS1='\[\e[36m\][k8s-inspector]\[\e[0m\] \w \$ '
-echo "Herramientas: kubectl k9s stern helm yq jq krr holmes | scripts: health pf krr-run holmes-ask"
+echo "Herramientas: kubectl(+krew) k9s stern helm yq jq krr holmes popeye kube-score kubeconform trivy calicoctl"
+echo "Scripts: health pf krr-run holmes-ask netshoot"

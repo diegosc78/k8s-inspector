@@ -1,0 +1,108 @@
+# ServiceAccount de SOLO LECTURA para k8s-inspector.
+# Aplicar:  kubectl apply -f k8s/rbac.yaml
+# Kubeconfig: ./k8s/make-kubeconfig.sh > ~/.kube/k8s-inspector.config
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8s-inspector
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-inspector
+  namespace: k8s-inspector
+---
+# Token de larga duración (no caduca; se invalida borrando este Secret o el ServiceAccount)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: k8s-inspector-token
+  namespace: k8s-inspector
+  annotations:
+    kubernetes.io/service-account.name: k8s-inspector
+type: kubernetes.io/service-account-token
+---
+# Lectura adicional que el ClusterRole `view` NO cubre (nodos, PV, RBAC, métricas, CRDs de Calico/CNPG...).
+# Los Secrets quedan fuera a propósito: ni `view` ni este rol los leen.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-inspector-extra-read
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/metrics, nodes/stats, persistentvolumes, componentstatuses]
+    verbs: [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [nodes, pods]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings, clusterroles, clusterrolebindings]
+    verbs: [get, list, watch]
+  - apiGroups: [apiextensions.k8s.io, admissionregistration.k8s.io, scheduling.k8s.io, node.k8s.io, policy]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - apiGroups: [networking.k8s.io, discovery.k8s.io, coordination.k8s.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  # Calico (calicoctl, modo datastore kubernetes) y CloudNativePG (kubectl cnpg)
+  - apiGroups: [crd.projectcalico.org, projectcalico.org, postgresql.cnpg.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  # Endpoints de métricas/salud del API server
+  - nonResourceURLs: [/healthz, /livez, /readyz, /version, /metrics]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-inspector-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: k8s-inspector
+    namespace: k8s-inspector
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-inspector-extra-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-inspector-extra-read
+subjects:
+  - kind: ServiceAccount
+    name: k8s-inspector
+    namespace: k8s-inspector
+---
+# Única escritura permitida: abrir port-forward a pods de Prometheus (script `pf`), solo en `monitoring`.
+# Ajusta el namespace si tu Prometheus está en otro (PROM_NAMESPACE).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8s-inspector-portforward
+  namespace: monitoring
+rules:
+  - apiGroups: [""]
+    resources: [pods/portforward]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8s-inspector-portforward
+  namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k8s-inspector-portforward
+subjects:
+  - kind: ServiceAccount
+    name: k8s-inspector
+    namespace: k8s-inspector

@@ -10,6 +10,9 @@ Imagen Docker con todo lo necesario para **depurar y afinar (tuning) un clúster
 |---|---|
 | `kubectl`, `helm`, `k9s`, `stern`, `kubectx`/`kubens` | Operar y explorar el clúster, logs multi-pod |
 | `yq`, `jq`, `dig`, `nc`, `ping`, `openssl`, `skopeo` | Utilidades de apoyo y red |
+| Plugins `kubectl` (krew): `neat`, `tree`, `df-pv`, `resource-capacity`, `lineage` | Manifiestos limpios, jerarquía de objetos, uso de PV, capacidad por nodo |
+| `kubectl cnpg`, `calicoctl` | CloudNativePG y Calico (modo datastore `kubernetes`) |
+| `popeye`, `kube-score`, `kubeconform`, `trivy` | Informe de buenas prácticas del clúster, calidad y validación de manifiestos, `trivy config` |
 | `krr` (Robusta KRR) | Recomendaciones de requests/limits a partir de métricas de Prometheus |
 | `holmes` (HolmesGPT) | Diagnóstico asistido por LLM (usa `kubectl`, logs y Prometheus) |
 
@@ -21,6 +24,7 @@ Scripts propios (en el `PATH`):
 | `pf` | Port-forward en segundo plano a Prometheus (`pf stop` para pararlo) |
 | `krr-run [args]` | Ejecuta `krr simple` contra Prometheus (abre el port-forward si hace falta) |
 | `holmes-ask "pregunta"` | Ejecuta `holmes ask` con acceso a Prometheus |
+| `netshoot <pod\|node/x>` | Contenedor efímero de red (`kubectl debug` con `nicolaka/netshoot`) |
 
 El contenedor corre como usuario no root (`inspector`, UID 1000).
 
@@ -36,7 +40,7 @@ El contenedor corre como usuario no root (`inspector`, UID 1000).
 git clone <url-de-este-repo> && cd k8s-inspector
 
 cp .env.example .env        # rellena tu API key y el MODEL
-docker compose build
+docker compose pull         # imagen publicada: ponte124/k8s-inspector (o `docker compose build`)
 docker compose run --rm inspector
 ```
 
@@ -58,6 +62,16 @@ Por defecto se monta `~/.kube/config` en solo lectura. Para usar otro fichero:
 ```bash
 export KUBECONFIG_HOST=/ruta/a/mi/kubeconfig
 ```
+
+**Recomendado: ServiceAccount de solo lectura.** [k8s/rbac.yaml](k8s/rbac.yaml) crea el namespace `k8s-inspector`, un ServiceAccount con el ClusterRole `view` + un rol extra de lectura (nodos, PV, RBAC, métricas, CRDs de Calico/CNPG; **sin Secrets**) y el único permiso de escritura necesario: `pods/portforward` en el namespace `monitoring` (ajústalo si tu Prometheus está en otro).
+
+```bash
+kubectl apply -f k8s/rbac.yaml
+./k8s/make-kubeconfig.sh > ~/.kube/k8s-inspector.config && chmod 600 ~/.kube/k8s-inspector.config
+export KUBECONFIG_HOST=~/.kube/k8s-inspector.config
+```
+
+El token no caduca; para revocarlo: `kubectl delete -f k8s/rbac.yaml`.
 
 > El kubeconfig debe ser legible por el UID 1000 del contenedor.
 
@@ -110,31 +124,40 @@ Si el API server o Prometheus solo son alcanzables a través de la red del host 
 ## Sin Compose
 
 ```bash
-docker build -t k8s-inspector .
 docker run --rm -it \
   --env-file .env \
   -v ~/.kube/config:/home/inspector/.kube/config:ro \
   -v "$PWD/config/holmes.yaml:/home/inspector/.holmes/config.yaml:ro" \
-  k8s-inspector
+  ponte124/k8s-inspector
 ```
 
-## Build
+## Build y publicación
+
+El [Makefile](Makefile) usa `docker buildx` (multi-arquitectura amd64 + arm64) y publica en Docker Hub. El repositorio destino es configurable (por defecto `ponte124`):
 
 ```bash
-docker build -t k8s-inspector .
-docker build --build-arg KRR_REF=<tag> -t k8s-inspector .   # fijar versión de KRR
+make build                          # imagen local (arquitectura del host)
+docker login                        # (o `make login`)
+make push                           # ponte124/k8s-inspector:latest
+make push REPO=otro TAG=1.0.0       # otro/k8s-inspector:1.0.0 (+ :latest)
+make push BUILD_ARGS="--build-arg KUBECTL_VERSION=v1.37.1"
 ```
 
-Notas sobre el build:
+Variables: `REPO`, `IMAGE`, `TAG`, `PLATFORMS`, `BUILDER`, `BUILD_ARGS`. `make help` las muestra.
 
-- `kubectl`, `helm`, `k9s`, `stern`, `yq` y `kubectx` se descargan en su **última versión** en el momento del build. Para builds reproducibles, fija las versiones en el [Dockerfile](Dockerfile).
-- **KRR** no está en PyPI y su `pyproject.toml` no es instalable con pip/uv, por lo que se clona y se instala desde `requirements.txt` en un venv con Python 3.11 (KRR exige Python ≤ 3.12.9).
+### Versiones fijadas
+
+Todas las herramientas tienen un `ARG` con versión concreta en el [Dockerfile](Dockerfile), con valores por defecto adecuados para un **clúster Kubernetes 1.36** (`kubectl` v1.36.5; admite ±1 versión menor respecto al API server). Al actualizar el clúster, sube `KUBECTL_VERSION` y revisa `K9S_VERSION`/`HELM_VERSION`/`KRR_REF`/`HOLMESGPT_VERSION`. Los plugins de krew se instalan en su última versión del índice.
+
+Notas:
+
+- **KRR** no está en PyPI y su `pyproject.toml` no es instalable con pip/uv, por lo que se clona (tag `KRR_REF`) y se instala desde `requirements.txt` en un venv con Python 3.11 (KRR exige Python ≤ 3.12.9).
 - **HolmesGPT** se instala desde PyPI con `uv tool install`, en su propio entorno aislado.
 
 ## Seguridad
 
 - Ninguna credencial se incluye en la imagen; `.gitignore` y `.dockerignore` excluyen `.env`, kubeconfigs y claves.
-- Monta el kubeconfig con `:ro`. Considera usar un ServiceAccount/usuario de **solo lectura** para esta herramienta: HolmesGPT puede ejecutar `kubectl` y es preferible que no pueda modificar nada.
+- Monta el kubeconfig con `:ro` y usa el ServiceAccount de **solo lectura** de [k8s/rbac.yaml](k8s/rbac.yaml): HolmesGPT puede ejecutar `kubectl` y no debe poder modificar nada.
 - El contenido de tu clúster (logs, eventos, manifiestos) se envía al proveedor LLM que configures. Revisa qué datos sensibles pueden contener antes de usarlo con un proveedor externo, o usa un modelo local (Ollama).
 
 ## Estructura
@@ -142,10 +165,12 @@ Notas sobre el build:
 ```
 .
 ├── Dockerfile
+├── Makefile              # buildx multi-arch + push a Docker Hub
 ├── docker-compose.yml
+├── k8s/                  # rbac.yaml (ServiceAccount solo lectura) y make-kubeconfig.sh
 ├── .env.example          # plantilla de variables (copiar a .env)
 ├── config/holmes.yaml    # toolsets de HolmesGPT
-└── scripts/              # health, pf, krr-run, holmes-ask, krr, bashrc, entrypoint
+└── scripts/              # health, pf, krr-run, holmes-ask, netshoot, krr, bashrc, entrypoint
 ```
 
 ## Roadmap
@@ -153,10 +178,10 @@ Notas sobre el build:
 Ideas pendientes, de mayor a menor prioridad.
 
 ### Seguridad y mantenimiento
-- [ ] **Kubeconfig de solo lectura:** ServiceAccount con el ClusterRole `view` y un kubeconfig dedicado para el contenedor (HolmesGPT ejecuta `kubectl`, no debería tener permisos de admin).
-- [ ] **Versiones fijadas:** pasar `kubectl`, `helm`, `k9s`, `stern`, `yq`, `kubectx` y `uv` a `ARG` con versión concreta, y fijar `KRR_REF` a un commit. Automatizar las actualizaciones con Renovate o Dependabot.
+- [x] **Kubeconfig de solo lectura:** ServiceAccount con el ClusterRole `view` y un kubeconfig dedicado para el contenedor (HolmesGPT ejecuta `kubectl`, no debería tener permisos de admin).
+- [x] **Versiones fijadas** (hecho). Pendiente: automatizar las actualizaciones con Renovate o Dependabot.
 - [ ] **CI:** GitHub Actions que construya la imagen, la analice con `hadolint` y `trivy` y la publique en GHCR.
-- [ ] **Multi-arquitectura:** build con `docker buildx` para amd64 y arm64 (el Dockerfile ya usa `TARGETARCH`).
+- [x] **Multi-arquitectura:** build con `docker buildx` para amd64 y arm64 (el Dockerfile ya usa `TARGETARCH`).
 
 ### Automatización
 - [ ] **Informes guardados:** que `krr-run` vuelque a `~/reports/` con fecha (`--formatter json`/`csv`) para comparar recomendaciones en el tiempo.
@@ -164,10 +189,10 @@ Ideas pendientes, de mayor a menor prioridad.
 - [ ] **HolmesGPT por alertas:** ejecutarlo como servicio (o servidor MCP) integrado con Alertmanager para que investigue cuando salte una alerta.
 
 ### Herramientas a añadir
-- [ ] **Plugins de `kubectl` vía krew:** `neat`, `tree`, `df-pv`, `resource-capacity`, `lineage` (este último reactiva el toolset `kubernetes/krew-extras` de Holmes).
-- [ ] **Bases de datos:** plugin `kubectl cnpg` (si usas CloudNativePG).
-- [ ] **Red:** `calicoctl` (si usas Calico) e imagen efímera tipo `netshoot` para `kubectl debug`.
-- [ ] **Calidad de manifiestos:** `popeye` o `kube-score` (informe de buenas prácticas del clúster) y `kubeconform` / `trivy config`.
+- [x] **Plugins de `kubectl` vía krew:** `neat`, `tree`, `df-pv`, `resource-capacity`, `lineage` (este último reactiva el toolset `kubernetes/krew-extras` de Holmes).
+- [x] **Bases de datos:** plugin `kubectl cnpg` (si usas CloudNativePG).
+- [x] **Red:** `calicoctl` (si usas Calico) e imagen efímera tipo `netshoot` para `kubectl debug`.
+- [x] **Calidad de manifiestos:** `popeye` o `kube-score` (informe de buenas prácticas del clúster) y `kubeconform` / `trivy config`.
 
 ### Integraciones de HolmesGPT
 - [ ] **Grafana:** activar el toolset de dashboards.

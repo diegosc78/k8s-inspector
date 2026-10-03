@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Contenedor efímero de red (netshoot) para depurar: netshoot <pod> [-n ns] [--target=<contenedor>]
+#   netshoot node/<nodo>   -> shell de red en un nodo
+set -e
+[ $# -ge 1 ] || { echo "Uso: netshoot <pod|node/nombre> [-n ns] [--target=contenedor]" >&2; exit 1; }
+exec kubectl debug -it "$@" --image="${NETSHOOT_IMAGE:-nicolaka/netshoot:v0.14}"
