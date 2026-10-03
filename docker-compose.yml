@@ -16,3 +16,28 @@ services:
       - "host.docker.internal:host-gateway"
     # Descomenta si el API server/Prometheus solo son alcanzables vía red del host (VPN, etc.)
     network_mode: host
+
+  # --- Modo API en local: docker compose --profile api up  (ver README) ---
+  holmes-server:
+    profiles: [api]
+    image: ${IMAGE:-ponte124/k8s-inspector}:${TAG:-latest}
+    command: ["holmes-server"]
+    env_file: .env
+    environment:
+      HOLMES_API_KEY: ${HOLMES_API_KEY:-}
+    volumes:
+      - ${KUBECONFIG_HOST:-~/.kube/config}:/home/inspector/.kube/config:ro
+      - ./config/holmes.yaml:/home/inspector/.holmes/config.yaml:ro
+    network_mode: host   # puerto 5050
+
+  holmes-gateway:
+    profiles: [api]
+    image: ${IMAGE:-ponte124/k8s-inspector}:${TAG:-latest}
+    command: ["holmes-gateway"]
+    env_file: .env
+    environment:
+      HOLMES_URL: http://localhost:5050
+      HOLMES_API_KEY: ${HOLMES_API_KEY:-}
+      GATEWAY_API_KEY: ${GATEWAY_API_KEY:-}
+    network_mode: host   # puerto 8080
+    depends_on: [holmes-server]

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Servidor API de HolmesGPT (puerto $HOLMES_PORT, 5050). Pensado para desplegarse en el clúster
+# (ServiceAccount in-cluster); en local abre antes los port-forward a Prometheus/Grafana.
+# Auth de la API: define HOLMES_API_KEY.
+set -euo pipefail
+export HOLMES_HOST="${HOLMES_HOST:-0.0.0.0}"
+if [ -z "${KUBERNETES_SERVICE_HOST:-}" ]; then   # fuera del clúster
+  if [ -z "${PROMETHEUS_URL:-}" ]; then pf >/dev/null || true; export PROMETHEUS_URL="http://localhost:${PROM_PORT:-9090}"; fi
+  if [ -n "${GRAFANA_API_KEY:-}" ] && [ -z "${GRAFANA_URL:-}" ]; then pf grafana >/dev/null || true; export GRAFANA_URL="http://localhost:${GRAFANA_PORT:-3000}"; fi
+fi
+[ -n "${HOLMES_API_KEY:-}" ] || echo "⚠️  HOLMES_API_KEY vacío: la API de Holmes no exige autenticación" >&2
+exec /home/inspector/.local/share/uv/tools/holmesgpt/bin/python /home/inspector/holmes-server/server.py

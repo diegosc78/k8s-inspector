@@ -193,6 +193,58 @@ Notas:
 - **KRR** no está en PyPI y su `pyproject.toml` no es instalable con pip/uv, por lo que se clona (tag `KRR_REF`) y se instala desde `requirements.txt` en un venv con Python 3.11 (KRR exige Python ≤ 3.12.9).
 - **HolmesGPT** se instala desde PyPI con `uv tool install`, en su propio entorno aislado.
 
+## API de Holmes y compatibilidad OpenAI / Anthropic
+
+La misma imagen sirve para dos usos: **cliente** (shell interactiva, por defecto) y **servidor** (API dentro del clúster). Solo cambia el comando:
+
+| Comando | Qué arranca | Puerto |
+|---|---|---|
+| `bash` (por defecto) | Shell con todas las herramientas | - |
+| `holmes-server` | API nativa de Holmes (`/api/chat`...) | 5050 |
+| `holmes-gateway` | Adaptador **OpenAI** (`/v1/chat/completions`, `/v1/models`) y **Anthropic** (`/v1/messages`) delante de Holmes | 8080 |
+
+El `server.py` de Holmes no viene en el paquete de PyPI: el [Dockerfile](Dockerfile) lo toma del repo en el tag exacto de `HOLMESGPT_VERSION`.
+
+### Probar en local
+
+```bash
+# en .env: HOLMES_API_KEY=... y GATEWAY_API_KEY=... (cualquier cadena)
+docker compose --profile api up holmes-server holmes-gateway
+curl localhost:8080/v1/models -H "Authorization: Bearer $GATEWAY_API_KEY"
+curl localhost:8080/v1/chat/completions -H "Authorization: Bearer $GATEWAY_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"holmes","stream":true,"messages":[{"role":"user","content":"¿hay pods con problemas?"}]}'
+```
+
+Fuera del clúster, `holmes-server` abre solo los port-forward a Prometheus/Grafana (como `holmes-ask`). Dentro del clúster (`KUBERNETES_SERVICE_HOST` definido) no los abre: usa el ServiceAccount del pod y el `PROMETHEUS_URL` que le pases (o el autodescubrimiento de Holmes). El ServiceAccount de solo lectura de [k8s/rbac.yaml](k8s/rbac.yaml) sirve también para el pod.
+
+### Qué hace el gateway
+
+- **Indicadores de progreso.** Holmes tarda decenas de segundos en investigar. Con `stream: true` el gateway emite los comandos que va ejecutando (`🔧 kubectl get nodes`), su razonamiento (`💭 ...`) y un latido cada `HEARTBEAT_SECONDS` (`⏳ Sigo trabajando… (35 s)`). Van como `reasoning_content` (OpenAI; Open WebUI lo muestra como bloque plegable de "pensamiento") o como bloque `thinking` (Anthropic). `PROGRESS_MODE=content` los mezcla en la respuesta; `off` solo envía keepalives (`: keepalive` / `ping`). Sin `stream`, envía espacios en blanco (JSON válido) hasta tener la respuesta, para que los proxies no corten por inactividad.
+- **Memoria de herramientas.** Los clientes solo reenvían el texto de la conversación, así que Holmes "olvidaría" qué consultó. El gateway guarda el historial completo de Holmes (con llamadas y resultados de herramientas) en una caché en memoria, localizada por el último par usuario/asistente, y lo recupera en el turno siguiente. Si no está en caché (reinicio, varias réplicas, mensaje editado) recurre al historial de solo texto. Es una caché por proceso: con varias réplicas, usa afinidad de sesión o una sola.
+- **Herramientas del cliente ignoradas.** Holmes ejecuta sus herramientas en el servidor; no se exponen como `tool_calls`.
+- **Streaming.** Holmes no emite tokens sueltos: la respuesta final llega por trozos al terminar la investigación.
+
+| Variable | Defecto | Descripción |
+|---|---|---|
+| `HOLMES_URL` | `http://localhost:5050` | Servidor Holmes (en k8s, sidecar o Service) |
+| `HOLMES_API_KEY` | vacío | Clave de la API de Holmes (en servidor y gateway) |
+| `GATEWAY_API_KEY` | vacío (sin auth) | Clave de los clientes (`Authorization: Bearer` o `x-api-key`) |
+| `PROGRESS_MODE` | `reasoning` | `reasoning` \| `content` \| `off` |
+| `HEARTBEAT_SECONDS` | `10` | Intervalo del latido |
+| `REASONING_MAX_CHARS` | `300` | Recorte del razonamiento mostrado (0 = no mostrarlo) |
+| `HISTORY_CACHE_MAX` / `HISTORY_CACHE_TTL` | `64` / `21600` | Entradas y segundos de la caché de historial |
+| `GATEWAY_PORT` | `8080` | Puerto del gateway |
+| `DEFAULT_MODEL_ID` | `holmes` | Alias del modelo por defecto de Holmes |
+
+### Open WebUI
+
+*Admin → Settings → Connections → OpenAI*: URL `http://<servicio>:8080/v1`, clave `GATEWAY_API_KEY`, modelo `holmes`. **Importante:** en *Settings → Interface* asigna un **modelo de tareas distinto** (para títulos, etiquetas y sugerencias); si no, cada chat nuevo lanzaría investigaciones completas de Holmes solo para generar un título.
+
+### Despliegue en Kubernetes
+
+Esta imagen no incluye manifiestos (el chart de Helm vive aparte). Puntos a tener en cuenta: dos contenedores de la misma imagen en el pod (`holmes-server` y `holmes-gateway`, hablando por `localhost`) o dos Deployments; ConfigMap con [config/holmes.yaml](config/holmes.yaml) montado en `/home/inspector/.holmes/config.yaml`; Secret con la API key del LLM y las claves; `PROMETHEUS_URL` con la URL del Service; y subir los timeouts del Gateway/Ingress si lo expones fuera del clúster.
+
 ## Seguridad
 
 - Ninguna credencial se incluye en la imagen; `.gitignore` y `.dockerignore` excluyen `.env`, kubeconfigs y claves.
@@ -206,33 +258,9 @@ Notas:
 ├── Dockerfile
 ├── Makefile              # buildx multi-arch + push a Docker Hub
 ├── docker-compose.yml
+├── gateway/              # adaptador OpenAI/Anthropic para la API de Holmes
 ├── k8s/                  # rbac.yaml (ServiceAccount solo lectura) y make-kubeconfig.sh
 ├── .env.example          # plantilla de variables (copiar a .env)
 ├── config/holmes.yaml    # toolsets de HolmesGPT
-└── scripts/              # health, pf, krr-run, holmes-ask, netshoot, krr-report, krr-diff, krr, bashrc, entrypoint
+└── scripts/              # health, pf, krr-run, holmes-ask, holmes-server, holmes-gateway, netshoot, krr-report, krr-diff, krr, bashrc, entrypoint
 ```
-
-## Roadmap
-
-Ideas pendientes, de mayor a menor prioridad.
-
-### Seguridad y mantenimiento
-- [x] **Kubeconfig de solo lectura:** ServiceAccount con el ClusterRole `view` y un kubeconfig dedicado para el contenedor (HolmesGPT ejecuta `kubectl`, no debería tener permisos de admin).
-- [x] **Versiones fijadas** (hecho). Pendiente: automatizar las actualizaciones con Renovate o Dependabot.
-- [ ] **CI:** GitHub Actions que construya la imagen, la analice con `hadolint` y `trivy` y la publique en GHCR.
-- [x] **Multi-arquitectura:** build con `docker buildx` para amd64 y arm64 (el Dockerfile ya usa `TARGETARCH`).
-
-### Automatización
-- [x] **Informes guardados:** `krr-report` y `krr-diff`.
-- [ ] **Ejecución no interactiva:** `holmes-ask` y `krr-run` desde cron o un systemd timer, con informe periódico por correo o Telegram.
-- [ ] **HolmesGPT por alertas:** ejecutarlo como servicio (o servidor MCP) integrado con Alertmanager para que investigue cuando salte una alerta.
-
-### Herramientas a añadir
-- [x] **Plugins de `kubectl` vía krew:** `neat`, `tree`, `df-pv`, `resource-capacity`, `lineage` (este último reactiva el toolset `kubernetes/krew-extras` de Holmes).
-- [x] **Bases de datos:** plugin `kubectl cnpg` (si usas CloudNativePG).
-- [x] **Red:** `calicoctl` (si usas Calico) e imagen efímera tipo `netshoot` para `kubectl debug`.
-- [x] **Calidad de manifiestos:** `popeye` o `kube-score` (informe de buenas prácticas del clúster) y `kubeconform` / `trivy config`.
-
-### Integraciones de HolmesGPT
-- [x] **Grafana:** toolset de dashboards preparado (falta crear el token y descomentarlo, ver arriba).
-

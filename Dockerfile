@@ -93,12 +93,25 @@ RUN git clone --depth 1 --branch "${KRR_REF}" https://github.com/robusta-dev/krr
 # HolmesGPT (diagnóstico con LLM) sí está en PyPI
 RUN uv tool install "holmesgpt==${HOLMESGPT_VERSION}" && uv cache clean
 
+# Servidor API de Holmes (modo clúster): server.py NO viene en el paquete de PyPI, se toma del repo en el
+# tag exacto de HOLMESGPT_VERSION (usa internos de holmes.*, así que las versiones deben coincidir).
+RUN git clone --depth 1 --branch "${HOLMESGPT_VERSION}" https://github.com/HolmesGPT/holmesgpt /tmp/holmes-src \
+    && mkdir -p /home/inspector/holmes-server \
+    && cp /tmp/holmes-src/server.py /home/inspector/holmes-server/server.py \
+    && rm -rf /tmp/holmes-src
+
 # Config de Holmes (se puede sobrescribir montando ./config/holmes.yaml)
 COPY --chown=inspector:inspector config/holmes.yaml /home/inspector/.holmes/config.yaml
+
+# Adaptador OpenAI/Anthropic para la API de Holmes
+COPY --chown=inspector:inspector gateway/ /home/inspector/gateway/
 
 # Scripts propios
 COPY --chown=inspector:inspector scripts/ /home/inspector/.local/bin/
 COPY --chown=inspector:inspector scripts/bashrc /home/inspector/.bashrc
+
+# Modo API (opcional): `holmes-server` (5050, API nativa de Holmes) y `holmes-gateway` (8080, OpenAI/Anthropic)
+EXPOSE 5050 8080
 
 ENTRYPOINT ["/home/inspector/.local/bin/entrypoint.sh"]
 CMD ["/bin/bash"]

@@ -38,13 +38,14 @@ toolsets:
   # ---------------------------------------------------------------------------
   # Toolsets propios para las herramientas extra de la imagen (todos de SOLO LECTURA).
   # Se desactivan solos si el binario o las CRDs del clúster no existen.
+  # tags: [core] => disponibles tanto en el CLI (core+cli) como en el servidor API (core+cluster).
   # ---------------------------------------------------------------------------
 
   # KRR OSS (local, sobre Prometheus). NO es el toolset `robusta` (ese consulta la plataforma Robusta SaaS).
   krr/recommendations:
     description: "Recomendaciones de requests/limits de CPU y memoria (Robusta KRR OSS, basado en métricas de Prometheus)"
     docs_url: "https://github.com/robusta-dev/krr"
-    tags: [cli]
+    tags: [core]
     prerequisites:
       - command: "krr --help"
     llm_instructions: |
@@ -67,7 +68,7 @@ toolsets:
   popeye/sanitizer:
     description: "Informe de salud y buenas prácticas del clúster (Popeye): configuración, recursos sin límites, probes, imágenes, red..."
     docs_url: "https://popeyecli.io"
-    tags: [cli]
+    tags: [core]
     prerequisites:
       - command: "popeye version"
     tools:
@@ -85,7 +86,7 @@ toolsets:
   calico/core:
     description: "Estado de Calico: IP pools, políticas de red y asignación de IPs (calicoctl)"
     docs_url: "https://docs.tigera.io/calico/latest/reference/calicoctl/"
-    tags: [cli]
+    tags: [core]
     prerequisites:
       - command: "calicoctl version"
       - command: "kubectl get crd ippools.crd.projectcalico.org"
@@ -113,7 +114,7 @@ toolsets:
   cnpg/core:
     description: "Estado de clústeres PostgreSQL gestionados por CloudNativePG: réplicas, replicación, backups, WAL"
     docs_url: "https://cloudnative-pg.io/documentation/current/kubectl-plugin/"
-    tags: [cli]
+    tags: [core]
     prerequisites:
       - command: "kubectl cnpg version"
       - command: "kubectl get crd clusters.postgresql.cnpg.io"
