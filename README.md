@@ -115,6 +115,17 @@ El **metrics-server** no necesita port-forward: `kubectl top` va por el API serv
 
 Holmes intenta activar ~20 integraciones y marca como fallidas las que no aplican (Cilium, OpenShift, AKS, ArgoCD…). Este repo trae un [config/holmes.yaml](config/holmes.yaml) que desactiva las que no se usan en un clúster kubeadm genérico y activa `prometheus/metrics`. **Ajústalo a tu clúster**: si usas ArgoCD, Cilium, etc., quita la línea correspondiente (algunas necesitan además binarios o variables de entorno adicionales).
 
+Además define **toolsets propios** (solo lectura) para las herramientas extra de la imagen, que Holmes no trae integradas:
+
+| Toolset | Qué le permite a Holmes |
+|---|---|
+| `krr/recommendations` | Recomendaciones de requests/limits con KRR OSS local (`krr-run`). No es el toolset `robusta`, que consulta la plataforma Robusta SaaS y está desactivado |
+| `popeye/sanitizer` | Informe de salud y buenas prácticas del clúster |
+| `calico/core` | IP pools, IPAM, políticas de red y endpoints de Calico |
+| `cnpg/core` | Estado, réplicas y backups de clústeres CloudNativePG |
+
+Se desactivan solos si falta el binario o las CRDs del clúster. `kubernetes/krew-extras` es nativo de Holmes y se activa solo.
+
 El fichero se monta desde `./config/holmes.yaml`, así que puedes editarlo sin reconstruir la imagen. Ver estado de los toolsets: `holmes toolset list`.
 
 ### Red
@@ -147,7 +158,12 @@ Variables: `REPO`, `IMAGE`, `TAG`, `PLATFORMS`, `BUILDER`, `BUILD_ARGS`. `make h
 
 ### Versiones fijadas
 
-Todas las herramientas tienen un `ARG` con versión concreta en el [Dockerfile](Dockerfile), con valores por defecto adecuados para un **clúster Kubernetes 1.36** (`kubectl` v1.36.5; admite ±1 versión menor respecto al API server). Al actualizar el clúster, sube `KUBECTL_VERSION` y revisa `K9S_VERSION`/`HELM_VERSION`/`KRR_REF`/`HOLMESGPT_VERSION`. Los plugins de krew se instalan en su última versión del índice.
+Todas las herramientas tienen un `ARG` con versión concreta en el [Dockerfile](Dockerfile), con valores por defecto adecuados para un **clúster Kubernetes 1.36** (`kubectl` v1.36.5; admite ±1 versión menor respecto al API server). `CALICOCTL_VERSION` debe coincidir con la versión de Calico del clúster (calicoctl rechaza versiones distintas). Al actualizar el clúster, sube `KUBECTL_VERSION` y revisa `K9S_VERSION`/`HELM_VERSION`/`KRR_REF`/`HOLMESGPT_VERSION`. Los plugins de krew se instalan en su última versión del índice.
+
+Calicoctl debe coincidir con la versión de Calico del clúster. Ejemplo:
+ARG CALICOCTL_VERSION=v3.30.2
+
+Si en tu clúster tienes otra versión, cambia el ARG y construye tu imagen
 
 Notas:
 

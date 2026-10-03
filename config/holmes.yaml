@@ -24,3 +24,102 @@ toolsets:
   slab: {enabled: false}
   notion: {enabled: false}
   robusta: {enabled: false}
+
+  # ---------------------------------------------------------------------------
+  # Toolsets propios para las herramientas extra de la imagen (todos de SOLO LECTURA).
+  # Se desactivan solos si el binario o las CRDs del clúster no existen.
+  # ---------------------------------------------------------------------------
+
+  # KRR OSS (local, sobre Prometheus). NO es el toolset `robusta` (ese consulta la plataforma Robusta SaaS).
+  krr/recommendations:
+    description: "Recomendaciones de requests/limits de CPU y memoria (Robusta KRR OSS, basado en métricas de Prometheus)"
+    docs_url: "https://github.com/robusta-dev/krr"
+    tags: [cli]
+    prerequisites:
+      - command: "krr --help"
+    llm_instructions: |
+      Usa estas herramientas para preguntas de dimensionamiento: pods sobredimensionados o infradimensionados,
+      ajuste de requests/limits, ahorro de recursos. Interpreta el JSON: cada escaneo trae 'allocated' (valor actual)
+      y 'recommended' (valor sugerido) por contenedor, y 'severity' (OK/GOOD/WARNING/CRITICAL).
+      Son lentas (consultan histórico en Prometheus): acota SIEMPRE por namespace cuando sea posible.
+    tools:
+      - name: "krr_namespace"
+        description: "Recomendaciones de requests/limits de todos los workloads de un namespace"
+        command: "krr-run -n {{ namespace }} -f json -q"
+      - name: "krr_workload"
+        description: "Recomendaciones de requests/limits para un tipo de workload concreto en un namespace (resource_kind: Deployment, StatefulSet, DaemonSet, Job, CronJob...)"
+        command: "krr-run -n {{ namespace }} -r {{ resource_kind }} -f json -q"
+      - name: "krr_cluster"
+        description: "Recomendaciones para TODO el clúster (muy lento; úsalo solo si no se puede acotar por namespace)"
+        command: "krr-run -f json -q"
+
+  # Informe de buenas prácticas del clúster (Popeye)
+  popeye/sanitizer:
+    description: "Informe de salud y buenas prácticas del clúster (Popeye): configuración, recursos sin límites, probes, imágenes, red..."
+    docs_url: "https://popeyecli.io"
+    tags: [cli]
+    prerequisites:
+      - command: "popeye version"
+    tools:
+      - name: "popeye_cluster"
+        description: "Escaneo Popeye de todo el clúster (solo avisos y errores)"
+        command: "popeye -A -l warn -o json --force-exit-zero"
+      - name: "popeye_namespace"
+        description: "Escaneo Popeye de un namespace (solo avisos y errores)"
+        command: "popeye -n {{ namespace }} -l warn -o json --force-exit-zero"
+      - name: "popeye_score"
+        description: "Puntuación global (0-100) de salud del clúster según Popeye"
+        command: "popeye -A -o score --force-exit-zero"
+
+  # Calico (calicoctl en modo datastore kubernetes; DATASTORE_TYPE ya viene en la imagen)
+  calico/core:
+    description: "Estado de Calico: IP pools, políticas de red y asignación de IPs (calicoctl)"
+    docs_url: "https://docs.tigera.io/calico/latest/reference/calicoctl/"
+    tags: [cli]
+    prerequisites:
+      - command: "calicoctl version"
+      - command: "kubectl get crd ippools.crd.projectcalico.org"
+    tools:
+      - name: "calico_ippools"
+        description: "Lista los IP pools de Calico (CIDR, encapsulación, NAT)"
+        command: "calicoctl get ippool -o wide"
+      - name: "calico_ipam_show"
+        description: "Uso de IPs del IPAM de Calico (detectar agotamiento de direcciones)"
+        command: "calicoctl ipam show"
+      - name: "calico_networkpolicies"
+        description: "Lista las NetworkPolicy de Calico de todos los namespaces"
+        command: "calicoctl get networkpolicy -A -o wide"
+      - name: "calico_globalnetworkpolicies"
+        description: "Lista las GlobalNetworkPolicy de Calico"
+        command: "calicoctl get globalnetworkpolicy -o yaml"
+      - name: "calico_felixconfiguration"
+        description: "Configuración de Felix (dataplane de Calico)"
+        command: "calicoctl get felixconfiguration -o yaml"
+      - name: "calico_workloadendpoints"
+        description: "Workload endpoints de Calico en un namespace (qué pods tienen qué IP/interfaz)"
+        command: "calicoctl get workloadendpoint -n {{ namespace }} -o wide"
+
+  # CloudNativePG (plugin kubectl cnpg)
+  cnpg/core:
+    description: "Estado de clústeres PostgreSQL gestionados por CloudNativePG: réplicas, replicación, backups, WAL"
+    docs_url: "https://cloudnative-pg.io/documentation/current/kubectl-plugin/"
+    tags: [cli]
+    prerequisites:
+      - command: "kubectl cnpg version"
+      - command: "kubectl get crd clusters.postgresql.cnpg.io"
+    tools:
+      - name: "cnpg_list_clusters"
+        description: "Lista todos los clústeres CloudNativePG y su estado"
+        command: "kubectl get clusters.postgresql.cnpg.io -A -o wide"
+      - name: "cnpg_status"
+        description: "Estado de un clúster CNPG: primario, réplicas, lag de replicación, WAL, backups"
+        command: "kubectl cnpg status {{ cluster }} -n {{ namespace }}"
+      - name: "cnpg_status_verbose"
+        description: "Estado detallado de un clúster CNPG (incluye configuración PostgreSQL, certificados y slots)"
+        command: "kubectl cnpg status {{ cluster }} -n {{ namespace }} --verbose"
+      - name: "cnpg_backups"
+        description: "Lista los backups de CNPG de un namespace y su estado"
+        command: "kubectl get backups.postgresql.cnpg.io -n {{ namespace }} -o wide"
+      - name: "cnpg_scheduled_backups"
+        description: "Lista los backups programados de CNPG de un namespace"
+        command: "kubectl get scheduledbackups.postgresql.cnpg.io -n {{ namespace }} -o wide"
