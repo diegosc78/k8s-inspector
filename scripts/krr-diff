@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Compara dos informes de krr-report y muestra qué recomendaciones han cambiado.
+# Uso: krr-diff [antiguo.json nuevo.json]   (sin args: los dos más recientes de ~/reports)
+# Variable: MIN_CHANGE=10  (umbral en % para mostrar un cambio)
+set -euo pipefail
+DIR="${REPORTS_DIR:-$HOME/reports}"
+if [ $# -eq 2 ]; then OLD=$1; NEW=$2
+else
+  mapfile -t F < <(ls -1t "$DIR"/krr-*.json 2>/dev/null | head -2)
+  [ "${#F[@]}" -eq 2 ] || { echo "Necesito dos informes en $DIR (ejecuta krr-report dos veces)" >&2; exit 1; }
+  NEW=${F[0]}; OLD=${F[1]}
+fi
+echo "Antiguo: $OLD"; echo "Nuevo:   $NEW"; echo
+jq -r -n --slurpfile o "$OLD" --slurpfile n "$NEW" --argjson min "${MIN_CHANGE:-10}" '
+  def key: "\(.object.namespace)/\(.object.kind)/\(.object.name)/\(.object.container)";
+  def rec: .recommended.requests | {cpu: .cpu.value, memory: .memory.value};
+  def fmt($r; $v): if $v == null then "-" elif $r == "cpu" then "\($v * 1000 | round)m" else "\($v / 1048576 | round)Mi" end;
+  ($o[0].scans | map({(key): rec}) | add // {}) as $old
+  | ($n[0].scans | map({(key): rec}) | add // {}) as $new
+  | [ $new | to_entries[] | .key as $k | .value as $nv | ($old[$k] // null) as $ov
+      | ("cpu","memory") as $r
+      | ($nv[$r]) as $b | ($ov[$r]? // null) as $a
+      | if $ov == null then [$k, $r, "-", fmt($r;$b), "NUEVO"]
+        elif $a == null or $b == null or $a == 0 then empty
+        else (($b - $a) / $a * 100) as $p | select(($p | fabs) >= $min)
+          | [$k, $r, fmt($r;$a), fmt($r;$b), "\($p | round)%"] end ]
+    + [ $old | keys[] | select($new[.] == null) | [., "-", "-", "-", "ELIMINADO"] ]
+  | if length == 0 then "Sin cambios >= \($min)%" else
+      (["WORKLOAD/CONTENEDOR","RECURSO","ANTES","AHORA","CAMBIO"], (.[]|map(tostring))) | @tsv end' | column -t -s $'\t'

@@ -1,11 +1,24 @@
 #!/usr/bin/env bash
-# Port-forward en segundo plano a Prometheus. Uso: pf [stop]
+# Port-forward en segundo plano. Uso: pf [prometheus|grafana|stop]   (sin args: prometheus)
 set -euo pipefail
-NS="${PROM_NAMESPACE:-monitoring}"; SVC="${PROM_SERVICE:-prometheus-operated}"; PORT="${PROM_PORT:-9090}"
-PIDFILE=/tmp/pf-prometheus.pid
-if [ "${1:-}" = stop ]; then [ -f $PIDFILE ] && kill "$(cat $PIDFILE)" && rm -f $PIDFILE; exit 0; fi
+ACTION="${1:-prometheus}"
+declare -A NS SVC RPORT LPORT
+NS[prometheus]="${PROM_NAMESPACE:-monitoring}"; SVC[prometheus]="${PROM_SERVICE:-prometheus-operated}"
+RPORT[prometheus]="${PROM_PORT:-9090}";         LPORT[prometheus]="${PROM_PORT:-9090}"
+NS[grafana]="${GRAFANA_NAMESPACE:-monitoring}"; SVC[grafana]="${GRAFANA_SERVICE:-prom-grafana}"
+RPORT[grafana]="${GRAFANA_REMOTE_PORT:-80}";    LPORT[grafana]="${GRAFANA_PORT:-3000}"
+
+if [ "$ACTION" = stop ]; then
+  for t in prometheus grafana; do
+    f=/tmp/pf-$t.pid; [ -f $f ] && { kill "$(cat $f)" 2>/dev/null || true; rm -f $f; }
+  done
+  exit 0
+fi
+[ -n "${SVC[$ACTION]:-}" ] || { echo "Uso: pf [prometheus|grafana|stop]" >&2; exit 1; }
+
+PIDFILE=/tmp/pf-$ACTION.pid; LOG=/tmp/pf-$ACTION.log; PORT=${LPORT[$ACTION]}
 if [ -f $PIDFILE ] && kill -0 "$(cat $PIDFILE)" 2>/dev/null; then echo "Ya activo"; exit 0; fi
-kubectl -n "$NS" port-forward "svc/$SVC" "$PORT:$PORT" >/tmp/pf-prometheus.log 2>&1 &
+kubectl -n "${NS[$ACTION]}" port-forward "svc/${SVC[$ACTION]}" "$PORT:${RPORT[$ACTION]}" >$LOG 2>&1 &
 echo $! > $PIDFILE
-for _ in $(seq 20); do nc -z localhost "$PORT" 2>/dev/null && { echo "Prometheus -> http://localhost:$PORT"; exit 0; }; sleep 0.5; done
-echo "Fallo el port-forward:"; cat /tmp/pf-prometheus.log; exit 1
+for _ in $(seq 20); do nc -z localhost "$PORT" 2>/dev/null && { echo "$ACTION -> http://localhost:$PORT"; exit 0; }; sleep 0.5; done
+echo "Fallo el port-forward:"; cat $LOG; exit 1

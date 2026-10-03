@@ -5,6 +5,16 @@ toolsets:
   prometheus/metrics:
     enabled: true
 
+  # Grafana (dashboards): DESCOMENTA este bloque cuando tengas GRAFANA_API_KEY en .env (token de ServiceAccount
+  # de Grafana con rol Viewer, ver README). Holmes evalúa las variables aunque el toolset esté desactivado, así
+  # que con el bloque activo y sin variables muestra errores en cada arranque. GRAFANA_URL la exporta
+  # holmes-ask (port-forward a Grafana) o la defines en .env.
+  # grafana/dashboards:
+  #   enabled: true
+  #   config:
+  #     api_url: "{{ env.GRAFANA_URL }}"
+  #     api_key: "{{ env.GRAFANA_API_KEY }}"
+
   # No aplican a este clúster -> desactivados para un arranque más rápido y limpio
   cilium/core: {enabled: false}
   hubble/observability: {enabled: false}

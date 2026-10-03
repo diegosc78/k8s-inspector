@@ -4,4 +4,4 @@ source <(helm completion bash)
 alias kns=kubens kctx=kubectx
 PS1='\[\e[36m\][k8s-inspector]\[\e[0m\] \w \$ '
 echo "Herramientas: kubectl(+krew) k9s stern helm yq jq krr holmes popeye kube-score kubeconform trivy calicoctl"
-echo "Scripts: health pf krr-run holmes-ask netshoot"
+echo "Scripts: health pf krr-run krr-report krr-diff holmes-ask netshoot"

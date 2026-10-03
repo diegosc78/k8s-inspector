@@ -21,8 +21,10 @@ Scripts propios (en el `PATH`):
 | Script | Descripción |
 |---|---|
 | `health` | Resumen rápido: nodos, consumo, pods no sanos, reinicios altos y últimos Warnings |
-| `pf` | Port-forward en segundo plano a Prometheus (`pf stop` para pararlo) |
+| `pf [prometheus\|grafana]` | Port-forward en segundo plano a Prometheus (por defecto) o Grafana (`pf stop` los para) |
 | `krr-run [args]` | Ejecuta `krr simple` contra Prometheus (abre el port-forward si hace falta) |
+| `krr-report [args]` | Como `krr-run`, pero guarda el JSON con fecha en `~/reports/` (volumen `./reports`) |
+| `krr-diff [a.json b.json]` | Compara dos informes (por defecto los dos últimos) y muestra qué recomendaciones han cambiado |
 | `holmes-ask "pregunta"` | Ejecuta `holmes ask` con acceso a Prometheus |
 | `netshoot <pod\|node/x>` | Contenedor efímero de red (`kubectl debug` con `nicolaka/netshoot`) |
 
@@ -50,6 +52,7 @@ Dentro del contenedor:
 health                                        # estado general
 k9s                                           # UI de terminal
 krr-run -n kube-system                        # recomendaciones de recursos de un namespace
+krr-report && krr-diff                        # guarda informe con fecha y compara con el anterior
 holmes-ask "¿hay algún pod con problemas?"    # diagnóstico con LLM
 ```
 
@@ -128,6 +131,26 @@ Se desactivan solos si falta el binario o las CRDs del clúster. `kubernetes/kre
 
 El fichero se monta desde `./config/holmes.yaml`, así que puedes editarlo sin reconstruir la imagen. Ver estado de los toolsets: `holmes toolset list`.
 
+### Informes guardados
+
+`krr-report` guarda cada ejecución en `./reports/krr-AAAAMMDD-HHMMSS[-namespace].json` (el directorio se monta como volumen, ignorado por git). Tras varias ejecuciones, `krr-diff` muestra qué contenedores han cambiado su recomendación más de `MIN_CHANGE`% (10 por defecto) y cuáles son nuevos o han desaparecido:
+
+```bash
+krr-report -n kube-system        # hoy
+krr-report -n kube-system        # dentro de una semana
+MIN_CHANGE=5 krr-diff            # compara los dos últimos
+```
+
+> Compara informes con el mismo alcance (mismo `-n`) y la misma ventana de histórico.
+
+### Grafana (opcional)
+
+Holmes puede buscar y leer dashboards de Grafana (toolset `grafana/dashboards`). Necesita un token de **solo lectura**:
+
+1. En Grafana: *Administration → Users and access → Service accounts → Add service account* (rol **Viewer**) → *Add service account token*.
+2. Pon el token en `.env`: `GRAFANA_API_KEY=glsa_...` (`holmes-ask` abre el port-forward a Grafana solo; configurable con `GRAFANA_NAMESPACE`/`GRAFANA_SERVICE`/`GRAFANA_PORT`, o define `GRAFANA_URL` si ya está expuesto).
+3. Descomenta el bloque `grafana/dashboards` de [config/holmes.yaml](config/holmes.yaml). Va comentado porque Holmes evalúa las variables de entorno aunque el toolset esté desactivado y mostraría errores en cada arranque si faltan.
+
 ### Red
 
 Si el API server o Prometheus solo son alcanzables a través de la red del host (VPN, etc.), descomenta `network_mode: host` en [docker-compose.yml](docker-compose.yml).
@@ -186,7 +209,7 @@ Notas:
 ├── k8s/                  # rbac.yaml (ServiceAccount solo lectura) y make-kubeconfig.sh
 ├── .env.example          # plantilla de variables (copiar a .env)
 ├── config/holmes.yaml    # toolsets de HolmesGPT
-└── scripts/              # health, pf, krr-run, holmes-ask, netshoot, krr, bashrc, entrypoint
+└── scripts/              # health, pf, krr-run, holmes-ask, netshoot, krr-report, krr-diff, krr, bashrc, entrypoint
 ```
 
 ## Roadmap
@@ -200,7 +223,7 @@ Ideas pendientes, de mayor a menor prioridad.
 - [x] **Multi-arquitectura:** build con `docker buildx` para amd64 y arm64 (el Dockerfile ya usa `TARGETARCH`).
 
 ### Automatización
-- [ ] **Informes guardados:** que `krr-run` vuelque a `~/reports/` con fecha (`--formatter json`/`csv`) para comparar recomendaciones en el tiempo.
+- [x] **Informes guardados:** `krr-report` y `krr-diff`.
 - [ ] **Ejecución no interactiva:** `holmes-ask` y `krr-run` desde cron o un systemd timer, con informe periódico por correo o Telegram.
 - [ ] **HolmesGPT por alertas:** ejecutarlo como servicio (o servidor MCP) integrado con Alertmanager para que investigue cuando salte una alerta.
 
@@ -211,4 +234,5 @@ Ideas pendientes, de mayor a menor prioridad.
 - [x] **Calidad de manifiestos:** `popeye` o `kube-score` (informe de buenas prácticas del clúster) y `kubeconform` / `trivy config`.
 
 ### Integraciones de HolmesGPT
-- [ ] **Grafana:** activar el toolset de dashboards.
+- [x] **Grafana:** toolset de dashboards preparado (falta crear el token y descomentarlo, ver arriba).
+

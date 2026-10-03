@@ -29,7 +29,7 @@ ARG NETSHOOT_IMAGE=nicolaka/netshoot:v0.14
 # Herramientas base de depuración
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash-completion ca-certificates curl git jq less vim-tiny \
-    dnsutils iputils-ping netcat-openbsd openssl skopeo \
+    dnsutils iputils-ping netcat-openbsd openssl skopeo bsdextrautils \
     && rm -rf /var/lib/apt/lists/*
 
 # Binarios (versiones fijadas por ARG)
@@ -72,14 +72,16 @@ ENV KREW_ROOT=/home/inspector/.krew \
     DATASTORE_TYPE=kubernetes \
     NETSHOOT_IMAGE=${NETSHOOT_IMAGE}
 
-# Plugins de kubectl vía krew
+# Plugins de kubectl vía krew (con reintentos: descargan de GitHub, que a veces devuelve 503)
 RUN set -eux; \
     case "$TARGETARCH" in amd64|arm64) ;; *) exit 1 ;; esac; \
     cd /tmp; \
-    curl -fsSL "https://github.com/kubernetes-sigs/krew/releases/download/${KREW_VERSION}/krew-linux_${TARGETARCH}.tar.gz" | tar xz "./krew-linux_${TARGETARCH}"; \
-    "./krew-linux_${TARGETARCH}" install krew; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "https://github.com/kubernetes-sigs/krew/releases/download/${KREW_VERSION}/krew-linux_${TARGETARCH}.tar.gz" | tar xz "./krew-linux_${TARGETARCH}"; \
+    for i in 1 2 3 4 5; do \
+      { "./krew-linux_${TARGETARCH}" install krew && kubectl krew install neat tree df-pv resource-capacity lineage; } && break; \
+      [ "$i" = 5 ] && exit 1; sleep 15; \
+    done; \
     rm -f "./krew-linux_${TARGETARCH}"; \
-    kubectl krew install neat tree df-pv resource-capacity lineage; \
     rm -rf "${KREW_ROOT}/downloads" "${KREW_ROOT}/index/.git"
 
 # Robusta KRR (right-sizing): no está en PyPI y su pyproject no es instalable con uv/pip,
