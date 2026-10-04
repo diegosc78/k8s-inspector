@@ -52,6 +52,9 @@ DEFAULT_TASK_PATTERNS = [
     r"You are an autocompletion system",
     r"Generate a detailed prompt for am image generation",
 ]
+# Holmes añade al final de la respuesta marcadores `<< {"type": "promql", ...} >>` que solo entiende la UI de Robusta.
+STRIP_MARKERS = os.environ.get("STRIP_MARKERS", "true").lower() not in ("0", "false", "no")
+_MARKER_RE = re.compile(r'[ \t]*<<\s*\{\s*"type"\s*:\s*"[A-Za-z0-9_.-]+".*?\}\s*>>', re.DOTALL)
 TASK_BYPASS = os.environ.get("TASK_BYPASS", "true").lower() not in ("0", "false", "no")
 
 logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)-8s %(message)s")
@@ -75,6 +78,14 @@ async def auth(request: Request, call_next):
 # ----------------------------------------------------------------------------- memoria de herramientas
 def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
+
+
+def strip_markers(text: str) -> str:
+    """Quita los marcadores `<< {"type": ...} >>` de Holmes. Conservador: solo JSON con "type" entre << y >>."""
+    if not STRIP_MARKERS or "<<" not in text:
+        return text
+    cleaned = _MARKER_RE.sub("", text)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).rstrip() if cleaned != text else text
 
 
 def _pair_key(user: str, assistant: str) -> str:
@@ -273,6 +284,9 @@ async def holmes_events(chat: ChatInput) -> AsyncIterator[tuple]:
                         elif line == "" and event:
                             payload = json.loads("\n".join(data)) if data else {}
                             if event == "ai_answer_end":
+                                # Se limpia UNA vez: lo que ve el cliente y la clave de caché deben coincidir
+                                # (el cliente reenviará este texto en el turno siguiente).
+                                payload["analysis"] = strip_markers(payload.get("analysis") or "")
                                 cache.put(_pair_key(ask, payload.get("analysis") or ""), payload.get("conversation_history") or [])
                                 await queue.put(("answer", payload))
                             elif event == "error":

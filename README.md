@@ -22,7 +22,7 @@ Scripts propios (en el `PATH`):
 |---|---|
 | `health` | Resumen rápido: nodos, consumo, pods no sanos, reinicios altos y últimos Warnings |
 | `pf [prometheus\|grafana]` | Port-forward en segundo plano a Prometheus (por defecto) o Grafana (`pf stop` los para) |
-| `krr-run [args]` | Ejecuta `krr simple` contra Prometheus (abre el port-forward si hace falta) |
+| `krr-run [args]` | Ejecuta `krr inspector` (simple + tus estándares de [config/krr.yaml](config/krr.yaml)) contra Prometheus (abre el port-forward si hace falta) |
 | `krr-report [args]` | Como `krr-run`, pero guarda el JSON con fecha en `~/reports/` (volumen `./reports`) |
 | `krr-diff [a.json b.json]` | Compara dos informes (por defecto los dos últimos) y muestra qué recomendaciones han cambiado |
 | `holmes-ask "pregunta"` | Ejecuta `holmes ask` con acceso a Prometheus |
@@ -131,6 +131,12 @@ Se desactivan solos si falta el binario o las CRDs del clúster. `kubernetes/kre
 
 El fichero se monta desde `./config/holmes.yaml`, así que puedes editarlo sin reconstruir la imagen. Ver estado de los toolsets: `holmes toolset list`.
 
+### Estándares de KRR — `config/krr.yaml`
+
+KRR no tiene fichero de configuración propio (solo flags), así que la imagen registra una estrategia `inspector` (= `simple` + reglas propias, [scripts/krr_inspector.py](scripts/krr_inspector.py)) que lee [config/krr.yaml](config/krr.yaml): mínimos de CPU/memoria (`100m` / `64Mi`) y un límite de CPU heurístico en lugar de «unset»: `clamp(max(request × cpu_factor, pico observado × peak_factor), cpu_min, tope)`, siempre ≥ request (por defecto ×2, pico ×1,25, desde 500m; el pico evita estrangular cargas a ráfagas). El tope es `min(cpu_max, cores del worker más pequeño × (1 − node_margin))`: los cores asignables (`allocatable`) se leen de la API de K8s (nodos sin control-plane, margen extra del 10 %; ya cubierto por `k8s/rbac.yaml`; si falla, solo se aplica `cpu_max`). `cpu_factor: 0` restaura el límite sin definir. Los flags de la CLI (`--cpu-min`, `--cpu_percentile`…) tienen prioridad sobre el YAML.
+
+La imagen lleva estos valores por defecto en `/home/inspector/.krr/config.yaml`; para cambiarlos, monta tu fichero encima (`-v "$PWD/config/krr.yaml:/home/inspector/.krr/config.yaml:ro"`, ya hecho en `docker-compose.yml`) o apunta `KRR_CONFIG` a otra ruta.
+
 ### Informes guardados
 
 `krr-report` guarda cada ejecución en `./reports/krr-AAAAMMDD-HHMMSS[-namespace].json` (el directorio se monta como volumen, ignorado por git). Tras varias ejecuciones, `krr-diff` muestra qué contenedores han cambiado su recomendación más de `MIN_CHANGE`% (10 por defecto) y cuáles son nuevos o han desaparecido:
@@ -237,6 +243,7 @@ Fuera del clúster, `holmes-server` abre solo los port-forward a Prometheus/Graf
 | `HISTORY_CACHE_MAX` / `HISTORY_CACHE_TTL` | `64` / `21600` | Entradas y segundos de la caché de historial |
 | `GATEWAY_PORT` | `8080` | Puerto del gateway |
 | `TASK_BYPASS` | `true` | `false` envía también las tareas auxiliares a Holmes |
+| `STRIP_MARKERS` | `true` | Quita de la respuesta los marcadores `<< {"type": "promql", ...} >>` de Holmes (solo los interpreta la UI de Robusta) |
 | `TASK_PATTERNS` / `TASK_PATTERNS_EXTRA` | plantillas de Open WebUI | Expresiones regulares (separadas por `;;`) que identifican tareas auxiliares; la primera sustituye a las de serie, la segunda las amplía (útil si personalizas las plantillas) |
 | `DEFAULT_MODEL_ID` | `holmes` | Alias del modelo por defecto de Holmes |
 
@@ -265,5 +272,6 @@ Esta imagen no incluye manifiestos (el chart de Helm vive aparte). Puntos a tene
 ├── k8s/                  # rbac.yaml (ServiceAccount solo lectura) y make-kubeconfig.sh
 ├── .env.example          # plantilla de variables (copiar a .env)
 ├── config/holmes.yaml    # toolsets de HolmesGPT
+├── config/krr.yaml       # estándares de dimensionado de KRR (mínimos, límite de CPU)
 └── scripts/              # health, pf, krr-run, holmes-ask, holmes-server, holmes-gateway, netshoot, krr-report, krr-diff, krr, bashrc, entrypoint
 ```

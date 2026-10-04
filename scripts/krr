@@ -1,2 +1,3 @@
 #!/usr/bin/env bash
-exec /home/inspector/krr/.venv/bin/python /home/inspector/krr/krr.py "$@"
+# KRR con la estrategia `inspector` registrada y los mínimos de ~/.krr/config.yaml inyectados.
+exec /home/inspector/krr/.venv/bin/python /home/inspector/.local/bin/krr_inspector.py "$@"

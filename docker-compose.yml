@@ -11,6 +11,7 @@ services:
       # Credenciales SOLO montadas, nunca dentro de la imagen
       - ${KUBECONFIG_HOST:-~/.kube/config}:/home/inspector/.kube/config:ro
       - ./config/holmes.yaml:/home/inspector/.holmes/config.yaml:ro
+      - ./config/krr.yaml:/home/inspector/.krr/config.yaml:ro
       - ./reports:/home/inspector/reports
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -28,6 +29,7 @@ services:
     volumes:
       - ${KUBECONFIG_HOST:-~/.kube/config}:/home/inspector/.kube/config:ro
       - ./config/holmes.yaml:/home/inspector/.holmes/config.yaml:ro
+      - ./config/krr.yaml:/home/inspector/.krr/config.yaml:ro
     network_mode: host   # puerto 5050
 
   holmes-gateway:

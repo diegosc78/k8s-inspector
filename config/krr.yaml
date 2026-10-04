@@ -1,0 +1,29 @@
+# Estándares de dimensionado para KRR (estrategia `inspector`, ver scripts/krr_inspector.py).
+# Valores por defecto de la imagen; se sobrescribe montando el fichero en /home/inspector/.krr/config.yaml
+# (o apuntando KRR_CONFIG a otra ruta). Los flags de la CLI (p. ej. --cpu-min) siguen teniendo prioridad.
+# Cantidades en formato Kubernetes: CPU "100m" / "2"; memoria "64Mi" / "1Gi".
+
+requests:
+  cpu_min: 100m        # nunca recomendar menos de esto
+  memory_min: 64Mi
+
+limits:
+  # Límite de CPU: en vez de "unset" (KRR por defecto) =
+  #   clamp(max(request × cpu_factor, pico_observado × peak_factor), cpu_min, tope), siempre >= request.
+  # El pico (percentil peak_percentile del uso en el histórico; 100 = máximo) evita estrangular cargas a ráfagas
+  # cuyo request (p95) es bajo. peak_factor: 0 lo ignora. Pon cpu_factor: 0 para dejar el límite sin definir (comportamiento original).
+  cpu_factor: 2        # margen de ráfaga sobre el request
+  peak_factor: 1.25    # holgura sobre el pico observado
+  peak_percentile: 100
+  cpu_min: 500m        # límite mínimo (evita throttling en workloads minúsculos)
+  cpu_max: 2           # tope absoluto opcional (quítalo para usar solo el tope por nodo)
+  # Tope por nodo: cores ASIGNABLES (allocatable: ya descuenta kube/system-reserved) del worker MÁS PEQUEÑO (sin control-plane; si no hay, todos los nodos),
+  # menos este margen extra. Se lee de la API de K8s; si no hay acceso, se usa solo cpu_max.
+  # Tope efectivo = min(cpu_max, cores_allocatable_min_worker × (1 - node_margin)). Pon -1 para desactivarlo.
+  node_margin: 0.05
+  # El límite de memoria sigue la regla de KRR: igual al request (máximo observado + buffer).
+
+# Parámetros de la estrategia (equivalen a --cpu_percentile, etc.)
+strategy:
+  cpu_percentile: 95
+  memory_buffer_percentage: 15

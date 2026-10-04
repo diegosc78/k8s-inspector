@@ -1,6 +1,39 @@
 #!/usr/bin/env bash
 # KRR con Prometheus (URL explícita, o port-forward automático). Args extra se pasan a krr.
-set -euo pipefail
-if [ -z "${PROMETHEUS_URL:-}" ]; then pf >/dev/null; PROMETHEUS_URL="http://localhost:${PROM_PORT:-9090}"; fi
+# - Las llamadas concurrentes (Holmes lanza varias a la vez) comparten un único port-forward (flock).
+# - Limita a KRR_MAX_PARALLEL (5) ejecuciones simultáneas.
+# - Reintenta una vez si KRR no logra ningún escaneo (fallo típico por Prometheus saturado o forward caído).
+# - Si falla, devuelve el stderr de KRR y comprueba Prometheus, en vez de un error opaco.
+set -uo pipefail
+if [ -z "${PROMETHEUS_URL:-}" ]; then
+  exec 9>/tmp/pf-prometheus.lock; flock 9
+  pf >/dev/null || { echo "krr-run: no se pudo abrir el port-forward a Prometheus (define PROMETHEUS_URL)" >&2; exit 1; }
+  flock -u 9
+  PROMETHEUS_URL="http://localhost:${PROM_PORT:-9090}"
+fi
 mkdir -p ~/reports
-exec krr simple -p "$PROMETHEUS_URL" "$@"
+# Límite de ejecuciones KRR simultáneas (cada una usa ~10 workers contra Prometheus). KRR_MAX_PARALLEL=5 por defecto.
+slots=${KRR_MAX_PARALLEL:-5}
+while :; do
+  for i in $(seq "$slots"); do
+    exec 8>"/tmp/krr-slot-$i.lock"
+    flock -n 8 && break 2
+  done
+  sleep 1
+done
+out=$(mktemp); err=$(mktemp); trap 'rm -f "$out" "$err"' EXIT
+for attempt in 1 2; do
+  if krr inspector -p "$PROMETHEUS_URL" "$@" >"$out" 2>"$err"; then
+    cat "$out"; exit 0
+  fi
+  [ "$attempt" = 1 ] && sleep 3
+done
+echo "krr-run: KRR falló tras 2 intentos (args: $*)" >&2
+if curl -fsS -m 5 "$PROMETHEUS_URL/-/ready" >/dev/null 2>&1; then
+  echo "Prometheus ($PROMETHEUS_URL): OK" >&2
+else
+  echo "Prometheus ($PROMETHEUS_URL): NO responde" >&2
+  [ -f /tmp/pf-prometheus.log ] && tail -n 5 /tmp/pf-prometheus.log >&2
+fi
+tail -n 30 "$err" >&2; tail -n 10 "$out" >&2
+exit 1

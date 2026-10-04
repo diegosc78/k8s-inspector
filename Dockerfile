@@ -103,6 +103,9 @@ RUN git clone --depth 1 --branch "${HOLMESGPT_VERSION}" https://github.com/Holme
 # Config de Holmes (se puede sobrescribir montando ./config/holmes.yaml)
 COPY --chown=inspector:inspector config/holmes.yaml /home/inspector/.holmes/config.yaml
 
+# Estándares de KRR (mínimos/máximos de recursos; se puede sobrescribir montando ./config/krr.yaml)
+COPY --chown=inspector:inspector config/krr.yaml /home/inspector/.krr/config.yaml
+
 # Adaptador OpenAI/Anthropic para la API de Holmes
 COPY --chown=inspector:inspector gateway/ /home/inspector/gateway/
 

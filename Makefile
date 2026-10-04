@@ -4,7 +4,7 @@
 #   make build                     -> imagen local (arquitectura del host)
 REPO       ?= ponte124
 IMAGE      ?= k8s-inspector
-TAG        ?= latest
+TAG        ?= 26.10.4
 PLATFORMS  ?= linux/amd64,linux/arm64
 BUILDER    ?= multi-arch-builder
 BUILD_ARGS ?=

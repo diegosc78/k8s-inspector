@@ -52,7 +52,15 @@ toolsets:
       Usa estas herramientas para preguntas de dimensionamiento: pods sobredimensionados o infradimensionados,
       ajuste de requests/limits, ahorro de recursos. Interpreta el JSON: cada escaneo trae 'allocated' (valor actual)
       y 'recommended' (valor sugerido) por contenedor, y 'severity' (OK/GOOD/WARNING/CRITICAL).
+      Las recomendaciones siguen los estándares del usuario (~/.krr/config.yaml, estrategia 'inspector'), no los
+      valores por defecto de KRR: hay mínimos de request (CPU 100m, memoria 64Mi, así que un uso real menor sale
+      redondeado a ese mínimo, no es un error) y el límite de CPU NO es 'unset': es request x factor, con un suelo y un
+      tope según el worker más pequeño, siempre >= request. No propongas quitar el límite de CPU ni lo trates como
+      anomalía; el límite de memoria es igual al request.
       Son lentas (consultan histórico en Prometheus): acota SIEMPRE por namespace cuando sea posible.
+      Evita lanzar muchas en paralelo (saturan Prometheus); prefiere krr_workload por namespace/tipo y lanza pocas a la vez.
+      Si fallan, el error incluye el estado de Prometheus y el stderr de KRR: léelo antes de reintentar y no repitas
+      la misma llamada con los mismos parámetros (será rechazada); cambia el alcance o contrasta con consultas PromQL.
     tools:
       - name: "krr_namespace"
         description: "Recomendaciones de requests/limits de todos los workloads de un namespace"
